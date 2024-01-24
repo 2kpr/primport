@@ -1,0 +1,96 @@
+name: Build
+
+on:
+    push:
+      branches:
+        - main
+      tags:
+        - v*
+    pull_request:
+      types: [ opened, synchronize, reopened ]
+    workflow_dispatch:
+
+jobs:
+  build:
+    name: Build
+    strategy:
+      matrix:
+        platform:
+          - release_for: Linux-x86_64
+            os: ubuntu-latest
+            os_name: Linux
+            target: x86_64-unknown-linux-gnu
+            bin: primport
+            file_name: primport-linux-x64.zip
+            command: build
+
+          - release_for: Windows-x86_64
+            os: windows-latest
+            os_name: Windows
+            target: x86_64-pc-windows-msvc
+            bin: primport.exe
+            file_name: primport-windows-x64.zip
+            command: build
+
+          - release_for: macOS-x86_64
+            os: macOS-latest
+            os_name: macOS
+            target: x86_64-apple-darwin
+            bin: primport
+            file_name: primport-macos-x64.zip
+            command: build
+
+    runs-on: ${{ matrix.platform.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libgtk-3-dev
+        if: runner.os == 'Linux'
+        run: sudo apt-get install libgtk-3-dev
+
+      - name: Compile
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          command: "build"
+          target: ${{ matrix.platform.target }}
+          toolchain: stable
+          args: "--release"
+          strip: true
+
+      - name: Package as archive (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          cd target/${{ matrix.platform.target }}/release
+          Compress-Archive -Path ${{ matrix.platform.bin }} -DestinationPath ../../../${{ matrix.platform.file_name }}
+
+      - name: Package as archive (Linux/Macos)
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        shell: bash
+        run: |
+          cd target/${{ matrix.platform.target }}/release
+          zip -r ../../../${{ matrix.platform.file_name }} ${{ matrix.platform.bin }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: primport-${{ matrix.platform.os_name }}
+          path: "primport-*"
+
+  release:
+    name: Release
+    needs: [build]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: "primport-*/*"
+          prerelease: ${{ contains(github.ref, '-pre') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
